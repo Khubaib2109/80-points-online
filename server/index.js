@@ -125,31 +125,38 @@ io.on("connection", (socket) => {
     broadcastRoom(room);
   });
 
-  socket.on("sit", ({ code, seat, name }) => {
-    const room = rooms.get(code);
-    if (!room) return;
+ socket.on("sit", ({ code, seat, name }) => {
+  const room = rooms.get(code);
+  if (!room) return;
 
-    if (!["N","E","S","W"].includes(seat)) return;
+  if (!["N","E","S","W"].includes(seat)) return;
 
-    const current = room.seats[seat];
-    if (current && current !== socket.id) {
-      return socket.emit("error_msg", { message: "Seat already taken." });
-    }
+  const current = room.seats[seat];
+  if (current && current !== socket.id) {
+    return socket.emit("error_msg", { message: "Seat already taken." });
+  }
 
-    for (const s of ["N","E","S","W"]) {
-      if (room.seats[s] === socket.id) room.seats[s] = null;
-    }
+  for (const s of ["N","E","S","W"]) {
+    if (room.seats[s] === socket.id) room.seats[s] = null;
+  }
 
-    room.seats[seat] = socket.id;
-    
-    // Store player name
-    if (name) {
-      room.playerNames[socket.id] = name;
-      console.log('Player sat down:', name, 'at seat', seat);
-    }
-    
-    broadcastRoom(room);
-  });
+  room.seats[seat] = socket.id;
+  
+  // Store player name
+  if (name) {
+    room.playerNames[socket.id] = name;
+    console.log('Player sat down:', name, 'at seat', seat);
+  }
+  
+  // Auto-start game when 4 players are seated
+  const filled = Object.values(room.seats).filter(Boolean).length;
+  if (filled === 4 && !room.started) {
+    room.started = true;
+    console.log('Game auto-started - all 4 players seated');
+  }
+  
+  broadcastRoom(room);
+});
 
   socket.on("start_game", ({ code }) => {
     const room = rooms.get(code);
@@ -166,11 +173,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("draw_card", ({ code }) => {
-    const room = rooms.get(code);
-    if (!room || !room.started) {
-      console.log('Draw card failed - room not started');
-      return;
-    }
+  const room = rooms.get(code);
+  if (!room) {
+    console.log('Draw card failed - room not found');
+    return;
+  }
 
     if (!room.hands[socket.id]) {
       return socket.emit("error_msg", { message: "Join the room first." });
@@ -208,11 +215,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("clear_trick", ({ code }) => {
-    const room = rooms.get(code);
-    if (!room || !room.started) {
-      console.log('Clear trick failed - room not started');
-      return;
-    }
+  const room = rooms.get(code);
+  if (!room) {
+    console.log('Clear trick failed - room not found');
+    return;
+  }
 
     for (const sid of Object.keys(room.table)) {
       room.discards.push(...(room.table[sid] || []));
