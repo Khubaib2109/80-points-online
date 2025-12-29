@@ -18,6 +18,7 @@ const PORT = process.env.PORT || 10000;
  * rooms[code] = {
  *   code,
  *   seats: { N,E,S,W },
+ *   playerNames: { socketId: name },
  *   hands: { socketId: Card[] },
  *   table: { socketId: Card[] },
  *   discards: Card[],
@@ -69,6 +70,7 @@ function safeRoomStateFor(socketId, room) {
   return {
     code: room.code,
     seats: room.seats,
+    playerNames: room.playerNames || {},
     started: room.started,
     deckCount: room.deck.length,
     discardsCount: room.discards.length,
@@ -85,6 +87,8 @@ function broadcastRoom(room) {
 }
 
 io.on("connection", (socket) => {
+  console.log('Client connected:', socket.id);
+
   socket.on("create_room", () => {
     let code = makeRoomCode();
     while (rooms.has(code)) code = makeRoomCode();
@@ -92,6 +96,7 @@ io.on("connection", (socket) => {
     const room = {
       code,
       seats: { N: null, E: null, S: null, W: null },
+      playerNames: {},
       hands: {},
       table: {},
       discards: [],
@@ -100,22 +105,27 @@ io.on("connection", (socket) => {
     };
 
     rooms.set(code, room);
+    console.log('Room created:', code);
     socket.emit("room_created", { code });
   });
 
   socket.on("join_room", ({ code }) => {
     const room = rooms.get(code);
-    if (!room) return socket.emit("error_msg", { message: "Room not found." });
+    if (!room) {
+      console.log('Room not found:', code);
+      return socket.emit("error_msg", { message: "Room not found." });
+    }
 
     socket.join(code);
     room.hands[socket.id] = room.hands[socket.id] || [];
     room.table[socket.id] = room.table[socket.id] || [];
 
+    console.log('Player joined room:', socket.id, code);
     socket.emit("joined_room", { code });
     broadcastRoom(room);
   });
 
-  socket.on("sit", ({ code, seat }) => {
+  socket.on("sit", ({ code, seat, name }) => {
     const room = rooms.get(code);
     if (!room) return;
 
@@ -131,6 +141,13 @@ io.on("connection", (socket) => {
     }
 
     room.seats[seat] = socket.id;
+    
+    // Store player name
+    if (name) {
+      room.playerNames[socket.id] = name;
+      console.log('Player sat down:', name, 'at seat', seat);
+    }
+    
     broadcastRoom(room);
   });
 
@@ -144,12 +161,16 @@ io.on("connection", (socket) => {
     }
 
     room.started = true;
+    console.log('Game started in room:', code);
     broadcastRoom(room);
   });
 
   socket.on("draw_card", ({ code }) => {
     const room = rooms.get(code);
-    if (!room || !room.started) return;
+    if (!room || !room.started) {
+      console.log('Draw card failed - room not started');
+      return;
+    }
 
     if (!room.hands[socket.id]) {
       return socket.emit("error_msg", { message: "Join the room first." });
@@ -161,6 +182,7 @@ io.on("connection", (socket) => {
 
     const card = room.deck.pop();
     room.hands[socket.id].push(card);
+    console.log('Card drawn by', socket.id, '- Deck remaining:', room.deck.length);
     broadcastRoom(room);
   });
 
@@ -181,17 +203,22 @@ io.on("connection", (socket) => {
     }
 
     room.table[socket.id] = [...(room.table[socket.id] || []), ...toPlay];
+    console.log('Cards played by', socket.id, '- Cards:', toPlay.length);
     broadcastRoom(room);
   });
 
   socket.on("clear_trick", ({ code }) => {
     const room = rooms.get(code);
-    if (!room || !room.started) return;
+    if (!room || !room.started) {
+      console.log('Clear trick failed - room not started');
+      return;
+    }
 
     for (const sid of Object.keys(room.table)) {
       room.discards.push(...(room.table[sid] || []));
       room.table[sid] = [];
     }
+    console.log('Trick cleared in room:', code);
     broadcastRoom(room);
   });
 
@@ -209,10 +236,12 @@ io.on("connection", (socket) => {
     }
 
     room.started = false;
+    console.log('Round reset in room:', code);
     broadcastRoom(room);
   });
 
   socket.on("disconnect", () => {
+    console.log('Client disconnected:', socket.id);
     for (const room of rooms.values()) {
       let changed = false;
 
@@ -226,6 +255,7 @@ io.on("connection", (socket) => {
       if (room.hands[socket.id]) {
         delete room.hands[socket.id];
         delete room.table[socket.id];
+        delete room.playerNames[socket.id];
         changed = true;
       }
 
